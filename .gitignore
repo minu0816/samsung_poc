@@ -1,0 +1,46 @@
+# 영상 / 이미지 등 미디어 파일
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.webm
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.bmp
+*.webp
+*.heic
+*.tiff
+
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# 로그 / 런타임
+*.log
+*.pid
+
+# UI 덤프 등 XML
+*.xml
+
+# CSV / TSV (trace 등)
+*.csv
+*.tsv
+
+# eval 테스트 결과물 — 정의 파일(testcases/suite/batch/inputs)은 추적 유지
+eval_runs/**/runs/
+report.json
+report.md
+suite_report.md
+eval_report.md
+
+# Claude Code 런타임 락
+.claude/scheduled_tasks.lock
+
+# 개인/미디어 모음 (코드 아님)
+영상모음/

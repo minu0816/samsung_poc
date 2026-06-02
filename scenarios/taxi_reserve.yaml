@@ -1,0 +1,42 @@
+id: taxi_reserve
+description: "택시 예약하기 - {origin}에서 {destination} 가는 택시 예약해줘"
+target_app:
+  package: com.kakao.taxi
+  expected_activity_substr: TaxiHomeActivity
+  tab_keyword: null
+done_marker: "작업 마무리"
+max_obs_sec: 200
+# 반복 테스트 옵션 (CLI 플래그가 있으면 그쪽 우선). stall=진전 없음 판정 윈도우.
+stall_window_sec: 45
+recording:
+  bitrate: 4M
+  max_fps: 15
+phrasing_verbs:
+  - 예약해줘
+  - 예약 잡아줘
+  - 예약 부탁해
+defer_signals:
+  - "선택해 주세요"
+  - "선택하여"
+  - "버튼을 눌러"
+  - "확인 후"
+  - "확정해 주세요"
+  - "원하시는"
+  - "예약을 확정"
+decision_points:
+  - field: taxi_type
+    prompt_keywords:
+      - 벤티
+      - 블랙
+      - 모범
+      - 블루
+      - 일반
+      - 프리미엄
+      - 반려동물
+  - field: reservation_time
+    prompt_keywords_regex: '\d+\s*시|오전|오후|내일|모레|아침|저녁|밤|시간|새벽|점심|이따'
+screen_class_rules:
+  taxi_reservation_options:
+    require_any: ["예약하기", "예약 시간", "출발 시간"]
+  taxi_call_select:
+    require_any: ["차종 선택"]

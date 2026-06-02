@@ -1,0 +1,40 @@
+id: taxi_call
+description: "택시 부르기 - {origin}에서 {destination} 가는 택시 불러줘"
+target_app:
+  package: com.kakao.taxi
+  expected_activity_substr: TaxiHomeActivity
+  tab_keyword: null
+done_marker: "작업 마무리"
+max_obs_sec: 150
+# 반복 테스트 옵션 (CLI 플래그가 있으면 그쪽 우선). stall=진전 없음 판정 윈도우.
+stall_window_sec: 45
+recording:
+  bitrate: 4M
+  max_fps: 15
+phrasing_verbs:
+  - 불러줘
+  - 잡아줘
+  - 호출해줘
+defer_signals:
+  - "선택해 주세요"
+  - "선택하여"
+  - "버튼을 눌러"
+  - "확인 후"
+  - "확정해 주세요"
+  - "원하시는"
+decision_points:
+  - field: taxi_type
+    prompt_keywords:
+      - 벤티
+      - 블랙
+      - 모범
+      - 블루
+      - 일반
+      - 프리미엄
+      - 반려동물
+screen_class_rules:
+  taxi_call_select:
+    require_any: ["차종 선택", "택시 종류"]
+  taxi_call_confirm:
+    require_any: ["호출하기", "예상 요금"]
+    require_none: ["차종 선택"]

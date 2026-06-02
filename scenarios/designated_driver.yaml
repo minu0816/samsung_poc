@@ -1,0 +1,35 @@
+id: designated_driver
+description: "대리 부르기 - {current_location}에서 {destination} 가는 대리 불러줘"
+target_app:
+  package: com.kakao.taxi
+  expected_activity_substr: null
+  tab_keyword: "대리"
+done_marker: "작업 마무리"
+max_obs_sec: 180
+# 반복 테스트 옵션 (CLI 플래그가 있으면 그쪽 우선). stall=진전 없음 판정 윈도우.
+stall_window_sec: 45
+recording:
+  bitrate: 4M
+  max_fps: 15
+phrasing_verbs:
+  - 불러줘
+  - 잡아줘
+  - 호출해줘
+defer_signals:
+  - "선택해 주세요"
+  - "선택하여"
+  - "버튼을 눌러"
+  - "확인 후"
+  - "확정해 주세요"
+  - "원하시는"
+  - "기사를 선택"
+decision_points: []
+driver_keywords:
+  - 대리운전
+  - 대리기사
+  - 대리 호출
+screen_class_rules:
+  driver_setup:
+    require_any: ["대리"]
+  driver_call:
+    require_any: ["호출하기", "기사"]

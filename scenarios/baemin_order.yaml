@@ -1,0 +1,50 @@
+id: baemin_order
+# 성공 기준(실측 확정): 가게·메뉴·수량·배달옵션을 정확히 담아 주문을 구성하고 "작업 마무리".
+# 결제 직전 핸드오프(직접 주문 마무리)는 안전상 정상 동작으로 본다. 실제 결제하기 화면
+# 도달 여부는 screen_class(baemin_payment)로 별도 기록만 한다(통과 필수 아님).
+description: "배민 음식 주문 - {store}에서 {menu} {quantity} {order_type}로 주문해줘 (성공=주문 구성 완료+작업 마무리)"
+target_app:
+  package: com.sampleapp        # 배달의민족 (adb로 확인)
+  expected_activity_substr: null
+  tab_keyword: null
+# 완료 시 제미나이가 외치는 안정 신호(실측: 로그인 후 run에서 검출됨).
+# "조치 필요"(미로그인 차단)일 땐 안 뜨므로, 이게 뜨면 = 장바구니/주문 구성 완료.
+done_marker: "작업 마무리"
+max_obs_sec: 300
+# 반복 테스트 옵션 (CLI 플래그가 있으면 그쪽 우선). stall=진전 없음 판정 윈도우.
+stall_window_sec: 45
+recording:
+  bitrate: 4M
+  max_fps: 15
+phrasing_verbs:
+  - 주문해줘
+  - 시켜줘
+  - 주문 넣어줘
+# 1-shot 목표: 프롬프트에 옵션을 다 채워 되묻기를 없앤다.
+# 아래 신호가 응답에 뜨면 = 제미나이가 중간에 사용자에게 되물은 것 = 1-shot 실패(진단용).
+# "결제할까요/주문할까요" 같은 결제 직전 확인은 정상 종료점이므로 포함하지 않는다.
+defer_signals:
+  - "선택해 주세요"
+  - "어떤 걸로"
+  - "어떤 것으로"
+  - "골라 주세요"
+  - "맵기를"
+  - "사이즈를"
+  - "어느 매장"
+  - "어디서"
+  - "원하시는"
+# 1-shot이므로 사용자 확인을 요구하는 결정항목 없음(되묻으면 fail).
+decision_points: []
+# 실측 문구로 보정(2026-06-01 데모런). baemin_cart 도달 + 작업 마무리 = 성공.
+# baemin_payment는 깊이 지표용(에이전트가 결제 직전 핸드오프해 도달이 드묾, 문구 미확정).
+screen_class_rules:
+  baemin_store:        # 가게 메뉴 페이지(실측: 최소주문/배달 안내/함께주문)
+    require_any: ["최소주문", "배달 안내", "함께주문", "가장 인기 있는 메뉴"]
+    require_none: ["결제하기", "결제 금액"]
+  baemin_cart:         # 장바구니
+    require_any: ["장바구니", "주문하기"]
+    require_none: ["결제하기", "결제 금액"]
+  baemin_login_required:  # 미로그인 차단(실측: 조치 필요/로그인이 필요)
+    require_any: ["로그인이 필요", "조치 필요", "로그인 후 결제"]
+  baemin_payment:      # 결제 화면(성공) — 로그인 후 도달, 문구 재확인 필요
+    require_any: ["결제하기", "결제 금액", "결제 수단", "배달 주소"]
