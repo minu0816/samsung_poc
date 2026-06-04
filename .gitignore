@@ -32,8 +32,8 @@ __pycache__/
 *.csv
 *.tsv
 
-# eval 테스트 결과물 — 정의 파일(testcases/suite/batch/inputs)은 추적 유지
-eval_runs/**/runs/
+# eval 테스트 결과물 전체 무시 (런 산출물 영상은 물론 suite/report 정의·집계도 생성물이라 추적 안 함)
+eval_runs/
 report.json
 report.md
 suite_report.md
