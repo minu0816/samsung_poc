@@ -24,6 +24,7 @@ _END_REASON_TO_MODE = {
     'refusal': 'gemini_refused',
     'timeout': 'timeout',
     'stalled': 'stalled',
+    'gemini_error': 'gemini_error',
     'popup_blocked': 'popup_blocked',
     'never_reached_app': 'never_reached_app',
     'unknown': 'unknown',

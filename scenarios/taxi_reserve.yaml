@@ -35,6 +35,11 @@ decision_points:
       - 반려동물
   - field: reservation_time
     prompt_keywords_regex: '\d+\s*시|오전|오후|내일|모레|아침|저녁|밤|시간|새벽|점심|이따'
+# 카카오 진입 전 Gemini가 "어떤 앱으로 예약할까요?"처럼 되물을 때 자동 응답.
+# keyword_regex가 화면(프롬프트 echo 제외)에 보이면 질문 문구와 무관하게 reply를 보낸다.
+confirm:
+  keyword_regex: "카카오"
+  reply: "카카오티로 진행해줘"
 screen_class_rules:
   taxi_reservation_options:
     require_any: ["예약하기", "예약 시간", "출발 시간"]

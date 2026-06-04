@@ -21,10 +21,13 @@ done = cfg.get('done_marker', '작업 마무리')
 mx = cfg.get('max_obs_sec', 200)
 pkg = cfg.get('target_app', {}).get('package', 'com.kakao.taxi')
 tab = cfg.get('target_app', {}).get('tab_keyword') or 'NULL'
-print('\t'.join([str(done), str(mx), str(pkg), str(tab)]))
+cfm = cfg.get('confirm') or {}
+ckw = cfm.get('keyword_regex') or 'NULL'   # 진행-확인 자동응답 트리거 키워드(정규식). 없으면 비활성.
+crp = cfm.get('reply') or 'NULL'           # 트리거 시 보낼 응답 문구.
+print('\t'.join([str(done), str(mx), str(pkg), str(tab), str(ckw), str(crp)]))
 PY
 )
-IFS=$'\t' read -r DONE_MARKER MAX_OBS PKG TAB_KEYWORD <<< "$SCENARIO_FIELDS"
+IFS=$'\t' read -r DONE_MARKER MAX_OBS PKG TAB_KEYWORD CONFIRM_KEYWORD CONFIRM_REPLY <<< "$SCENARIO_FIELDS"
 
 # orchestrator가 --max-obs-sec로 넘긴 값이 있으면 시나리오 기본을 override (10~600 clamp).
 if [ -n "${MAX_OBS_OVERRIDE:-}" ]; then
@@ -177,7 +180,7 @@ LAST_ACT=""
 # 그 동안 PROGRESS_SAMPLE_INTERVAL초 간격으로 패널 dump + 스크린샷을 떠서 단계 변화를 시계열로 기록.
 # done 검출은 panel dump (혹은 자동 닫힌 chat list)에서 done_marker grep.
 PROGRESS_OPENED=0             # 0=아직 안 펼침, 1=펼친 상태 유지
-PROGRESS_OPEN_SCHEDULED=999999 # KAKAO_FIRST 잡히면 KAKAO_FIRST + DELAY로 갱신
+PROGRESS_OPEN_SCHEDULED=999999 # KAKAO_FIRST 또는 VD_RECORDING 활성화 시점 + DELAY로 갱신
 PROGRESS_FIRST_DELAY=4
 PROGRESS_NEXT_SAMPLE=999999   # 다음 sampling 시점
 PROGRESS_SAMPLE_INTERVAL=8    # sampling 간격(s)
@@ -199,6 +202,16 @@ STALL_WINDOW_SEC=$(( STALL_WINDOW_MS / 1000 ))
 LAST_TRANSITION_T=0               # activity 전이 시각(s) — 전이마다 갱신
 LAST_PROGRESS_CHANGE_T=0          # progress 패널 단계 텍스트가 바뀐 시각(s)
 LAST_PROGRESS_HASH=""
+LAST_WORKING_T=-1000              # "작업 진행 중" 헤더(에이전트 작업 중)가 마지막으로 보인 시각(s)
+# 정상이어도 느린 단계(예: 예약 타임피커 휠 조작)는 진행 캡션이 수십 초 고정돼 패널 해시가
+# 안 바뀐다(실측: 시간조절 단계가 ~85s 지속). "작업 진행 중"이 떠 있는 동안엔 더 관대한
+# stall 윈도우를 써서 작업 중인 런을 조기에 죽이지 않는다. 헤더가 사라지면(끝났거나 에러)
+# 기본 윈도우로 복귀.
+STALL_WINDOW_WORKING_SEC=$(( STALL_WINDOW_SEC * 3 ))
+[ "$STALL_WINDOW_WORKING_SEC" -lt 150 ] && STALL_WINDOW_WORKING_SEC=150
+# Gemini가 작업 도중 응답을 스스로 중단/에러내면 가상 디스플레이가 사라지고 아래 카드가 뜬다.
+# 기다려도 복구되지 않으므로(실측) stalled로 45s 대기하지 말고 gemini_error로 즉시 종료.
+GEMINI_ERROR_TOKENS=("대답이 중지되었습니다" "문제 발생")
 POPUP_SEEN_T=""                   # 팝업이 foreground로 처음 잡힌 시각(s)
 POPUP_BLOCK_SEC=8                 # 팝업이 이 시간 이상 고정되면 차단으로 판정
 REFUSAL_NEXT_T=2                  # 카카오 진입 전 refusal 체크 다음 시점(s)
@@ -230,6 +243,11 @@ while :; do
         # KAKAO_FIRST가 안 잡힌다. → 가상 디스플레이 활성화를 "작업 시작" 신호로 보고
         # done 폴링을 시작(잔여 카드 오검출 방지 위해 최소 20s 이후부터).
         if [ "$T" -lt 20 ]; then DONE_NEXT_T=20; else DONE_NEXT_T=$T; fi
+        # 동일 신호로 "진행 상황 보기" 패널 펼치기 일정도 예약. KAKAO_FIRST가 먼저
+        # 잡혀 이미 일정이 들어가 있으면(!=초기값) 덮어쓰지 않는다.
+        if [ "$PROGRESS_OPEN_SCHEDULED" -eq 999999 ]; then
+          PROGRESS_OPEN_SCHEDULED=$((T + PROGRESS_FIRST_DELAY))
+        fi
       fi
     fi
     VD_NEXT_CHECK_T=$((T + VD_CHECK_INTERVAL))
@@ -271,29 +289,51 @@ while :; do
             break
           fi
         done
-        # 카카오T 진행-확인 질문 자동 동의: 'refusal' 아니고, 같은 덤프에 '카카오'와
-        # 진행/질문 토큰이 동시에 있을 때만 "네 진행해주세요"로 응답해 흐름을 진행시킨다.
-        # (사용자 프롬프트엔 '카카오'가 없어 echo 오탐 없음, 평서문은 질문 토큰이 없어 제외)
+        # 진행-확인 자동 응답(시나리오 confirm 블록 기반): 'refusal' 아니고,
+        # confirm.keyword_regex가 화면에 보이면 질문 문구와 무관하게 confirm.reply로 응답해
+        # 흐름을 진행시킨다. (질문 문구를 사전에 예측하기 어려워 토큰 매칭 대신 앱 키워드로 트리거.
+        #  단, 프롬프트가 "카카오T로/배달의민족으로 ..."면 우리가 보낸 메시지 echo에도 키워드가
+        #  있으므로, 프롬프트와 동일한 노드는 제외하고 '다른' 노드의 키워드만 트리거로 본다.
+        #  → Gemini가 실제로 되묻는 경우에만 발동. CONFIRM_MAX로 중복 응답 차단)
         REPLIED_CONFIRM=0
-        if [ "$END_REASON" != "refusal" ] && [ "$CONFIRM_COUNT" -lt "$CONFIRM_MAX" ] \
-           && grep -q "카카오" /tmp/ui_ref_$$.xml 2>/dev/null \
-           && grep -qE "할까요|하시겠|진행하|예약할까요|호출할까요|이용할까요|확인해 주세요" /tmp/ui_ref_$$.xml 2>/dev/null; then
-          echo "[$RUN_ID] kakao confirmation prompt detected at +${T}s → 자동 동의 '네 진행해주세요'"
-          cp /tmp/ui_ref_$$.xml "$RUN_DIR/ui_confirm_${CONFIRM_COUNT}.xml"
-          adb shell input tap 478 1958 >/dev/null
-          sleep 0.4
-          broadcast_text "네 진행해주세요"
-          sleep 0.4
-          ui /tmp/ui_creply_$$.xml
-          CSEND=$(tap_node_by_attr /tmp/ui_creply_$$.xml 'content-desc="보내기"')
-          [ -z "$CSEND" ] && CSEND="978 2048"
-          adb shell input tap $CSEND >/dev/null
-          rm -f /tmp/ui_creply_$$.xml
-          NEEDED_CONFIRMATION=1
-          [ -z "$CONFIRM_AT" ] && CONFIRM_AT=$T
-          CONFIRM_COUNT=$((CONFIRM_COUNT + 1))
-          CONFIRM_EVIDENCE="kakao proceed-confirmation auto-agreed at +${T}s (reply '네 진행해주세요')"
-          REPLIED_CONFIRM=1
+        if [ "$CONFIRM_KEYWORD" != "NULL" ] && [ "$END_REASON" != "refusal" ] \
+           && [ "$CONFIRM_COUNT" -lt "$CONFIRM_MAX" ]; then
+          CONFIRM_HIT=$(python3 - "/tmp/ui_ref_$$.xml" "$PROMPT" "$CONFIRM_KEYWORD" <<'PY'
+import re, sys, os
+path, prompt, kw = sys.argv[1], sys.argv[2].strip(), sys.argv[3]
+if not os.path.exists(path):
+    print("0"); raise SystemExit
+try:
+    xml = open(path, encoding='utf-8', errors='ignore').read()
+    pat = re.compile(kw)
+except Exception:
+    print("0"); raise SystemExit
+for m in re.finditer(r'text="([^"]*)"', xml):
+    t = m.group(1).strip()
+    # 프롬프트 echo 노드는 제외 (서로 substring 관계면 같은 말풍선으로 간주)
+    if pat.search(t) and t != prompt and t not in prompt and prompt not in t:
+        print("1"); raise SystemExit
+print("0")
+PY
+)
+          if [ "$CONFIRM_HIT" = "1" ]; then
+            echo "[$RUN_ID] confirm prompt detected at +${T}s → 자동 응답 '$CONFIRM_REPLY'"
+            cp /tmp/ui_ref_$$.xml "$RUN_DIR/ui_confirm_${CONFIRM_COUNT}.xml"
+            adb shell input tap 478 1958 >/dev/null
+            sleep 0.4
+            broadcast_text "$CONFIRM_REPLY"
+            sleep 0.4
+            ui /tmp/ui_creply_$$.xml
+            CSEND=$(tap_node_by_attr /tmp/ui_creply_$$.xml 'content-desc="보내기"')
+            [ -z "$CSEND" ] && CSEND="978 2048"
+            adb shell input tap $CSEND >/dev/null
+            rm -f /tmp/ui_creply_$$.xml
+            NEEDED_CONFIRMATION=1
+            [ -z "$CONFIRM_AT" ] && CONFIRM_AT=$T
+            CONFIRM_COUNT=$((CONFIRM_COUNT + 1))
+            CONFIRM_EVIDENCE="confirm prompt auto-replied at +${T}s (reply '$CONFIRM_REPLY')"
+            REPLIED_CONFIRM=1
+          fi
         fi
         rm -f /tmp/ui_ref_$$.xml
         [ "$END_REASON" = "refusal" ] && break
@@ -323,8 +363,8 @@ while :; do
       ;;
   esac
 
-  # 진행 상황 패널 한 번 펼치기 (카카오 진입 +PROGRESS_FIRST_DELAY초 시점)
-  if [ "$PROGRESS_OPENED" -eq 0 ] && [ -n "$KAKAO_FIRST" ] && [ "$T" -ge "$PROGRESS_OPEN_SCHEDULED" ]; then
+  # 진행 상황 패널 한 번 펼치기 (앱 진입 또는 가상 디스플레이 활성화 +PROGRESS_FIRST_DELAY초 시점)
+  if [ "$PROGRESS_OPENED" -eq 0 ] && { [ -n "$KAKAO_FIRST" ] || [ "$VD_RECORDING" -eq 1 ]; } && [ "$T" -ge "$PROGRESS_OPEN_SCHEDULED" ]; then
     ui /tmp/ui_for_progress_$$.xml
     PROGRESS_BTN=$(tap_node_by_attr /tmp/ui_for_progress_$$.xml 'text="진행 상황 보기"')
     if [ -n "$PROGRESS_BTN" ]; then
@@ -352,7 +392,8 @@ while :; do
     PROGRESS_NEXT_SAMPLE=$((T + PROGRESS_SAMPLE_INTERVAL))
     echo -e "${IDX}\t${T}\t-\tui_progress_${IDX}.xml" >> "$PROGRESS_LOG"
     # 패널 단계 텍스트(=dump) 변화 추적 → stall 판정.
-    PHASH=$(md5 -q "$RUN_DIR/ui_progress_${IDX}.xml" 2>/dev/null || echo "")
+    # 해시 명령은 OS마다 다름: 리눅스 md5sum("hash  file"), macOS md5 -q("hash"). 양쪽 지원.
+    PHASH=$( { md5sum "$RUN_DIR/ui_progress_${IDX}.xml" 2>/dev/null || md5 -q "$RUN_DIR/ui_progress_${IDX}.xml" 2>/dev/null; } | awk '{print $1}')
     if [ -n "$PHASH" ] && [ "$PHASH" != "$LAST_PROGRESS_HASH" ]; then
       LAST_PROGRESS_HASH="$PHASH"
       LAST_PROGRESS_CHANGE_T=$T
@@ -362,11 +403,17 @@ while :; do
   # stalled 판정: 카카오 진입 후, done 없이 activity 전이도 패널 단계 변화도
   # STALL_WINDOW_SEC 동안 모두 멈춰 있으면 "진전 없음".
   if [ -n "$KAKAO_FIRST" ] && [ -z "$DONE_AT" ]; then
-    if [ $((T - LAST_TRANSITION_T)) -ge "$STALL_WINDOW_SEC" ] \
-       && [ $((T - LAST_PROGRESS_CHANGE_T)) -ge "$STALL_WINDOW_SEC" ]; then
+    # "작업 진행 중" 헤더가 최근(기본 윈도우 내)에 보였으면 = 에이전트가 느린 단계 수행 중일
+    # 수 있으므로 관대한 윈도우를, 헤더가 사라진 지 오래면 기본 윈도우를 적용.
+    EFFECTIVE_STALL_SEC="$STALL_WINDOW_SEC"
+    if [ $((T - LAST_WORKING_T)) -lt "$STALL_WINDOW_SEC" ]; then
+      EFFECTIVE_STALL_SEC="$STALL_WINDOW_WORKING_SEC"
+    fi
+    if [ $((T - LAST_TRANSITION_T)) -ge "$EFFECTIVE_STALL_SEC" ] \
+       && [ $((T - LAST_PROGRESS_CHANGE_T)) -ge "$EFFECTIVE_STALL_SEC" ]; then
       END_REASON="stalled"
-      END_REASON_EVIDENCE="no activity/progress change for ${STALL_WINDOW_SEC}s; last_act=$LAST_ACT"
-      echo "[$RUN_ID] stalled at +${T}s"
+      END_REASON_EVIDENCE="no activity/progress change for ${EFFECTIVE_STALL_SEC}s; last_act=$LAST_ACT"
+      echo "[$RUN_ID] stalled at +${T}s (window=${EFFECTIVE_STALL_SEC}s)"
       break
     fi
   fi
@@ -380,6 +427,23 @@ while :; do
   if { [ -n "$KAKAO_FIRST" ] || [ "$VD_RECORDING" -eq 1 ]; } && [ "$T" -ge "$DONE_NEXT_T" ]; then
     DONE_NEXT_T=$((T + 1))
     ui /tmp/ui_check_$$.xml
+    # Gemini 응답 중단/에러 카드 검출 → 복구 불가이므로 즉시 종료(stalled 45s 대기 회피).
+    # (done_marker가 같이 잡히는 일은 없지만, 안전하게 done 검사보다 먼저 본다.)
+    for etok in "${GEMINI_ERROR_TOKENS[@]}"; do
+      if grep -q "$etok" /tmp/ui_check_$$.xml 2>/dev/null; then
+        END_REASON="gemini_error"
+        END_REASON_EVIDENCE="$etok"
+        cp /tmp/ui_check_$$.xml "$RUN_DIR/ui_done.xml"
+        shot "$RUN_DIR/gemini_error_${T}s.png"
+        echo "[$RUN_ID] gemini_error detected at +${T}s ('$etok')"
+        break
+      fi
+    done
+    [ "$END_REASON" = "gemini_error" ] && break
+    # "작업 진행 중" 헤더가 보이면 에이전트가 아직 작업 중(느린 타임피커 단계 포함) → 관대 윈도우용 시각 갱신.
+    if grep -q "작업 진행 중" /tmp/ui_check_$$.xml 2>/dev/null; then
+      LAST_WORKING_T=$T
+    fi
     if grep -q "$DONE_MARKER" /tmp/ui_check_$$.xml 2>/dev/null; then
       DONE_AT=$T
       DONE_MS=$(now_ms)

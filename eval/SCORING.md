@@ -55,7 +55,7 @@
     "advanced_screens": <int>
   },
   "tab_correct": <bool|null>,
-  "failure_mode": "none|wrong_app|wrong_tab|misinterpret|crash|timeout|gemini_refused|popup_blocked",
+  "failure_mode": "none|wrong_app|wrong_tab|misinterpret|crash|timeout|gemini_refused|popup_blocked|stalled|gemini_error|never_reached_app",
   "popups_encountered": [...],
   "gemini_uncertainty": <bool>,
   "overall": "pass|partial|fail",
@@ -109,6 +109,8 @@
 | 신호 | failure_mode |
 |---|---|
 | `failure_signals.refusal` 존재 | `gemini_refused` |
+| `end_reason == gemini_error` (응답 중단/문제 발생 카드) | `gemini_error` |
+| `end_reason == stalled` (진전 없음 윈도우 초과) | `stalled` |
 | `speed.reached_done_marker == false` | `timeout` |
 | 카카오 진입 후 다른 앱이 ≥10s foreground | `wrong_app` |
 | designated_driver인데 `tab_correct == false` | `wrong_tab` |

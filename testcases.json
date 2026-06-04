@@ -6,7 +6,7 @@
     {
       "scenario": "taxi_reserve",
       "combine": "zip",
-      "template": "{origin}에서 {destination} 가는 {taxi_type} 택시 {reservation_time}에 예약해줘",
+      "template": "카카오T로 {origin}에서 {destination} 가는 {taxi_type} 택시 {reservation_time}에 예약해줘",
       "phrasing_verb": "예약해줘",
       "params": {
         "origin": [
